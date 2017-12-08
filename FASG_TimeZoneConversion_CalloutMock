@@ -1,0 +1,38 @@
+/*******************************************************************************************************************************
+
+Apex Class Name : FASG_TimeZoneConversion_CalloutMock
+Version         : 1.0
+Created On      : August 2, 2017
+Function        : This class is used to simulate a callout to the webservice for the member time zone.
+
+Modification Log :
+
+*     Version No          element          Developer                         Date                                Comments
+*
+* ----------------------------------------------------------------------------------------------------------------------------
+*          1.0                  Alfonso Fernandez                   08/02/17                            Initial Version
+
+***********************************************************************************************************************************/
+global class FASG_TimeZoneConversion_CalloutMock implements WebServiceMock
+{
+   global void doInvoke(
+           Object stub,
+           Object request,
+           Map<String, Object> response,
+           String endpoint,
+           String soapAction,
+           String requestName,
+           String responseNS,
+           String responseName,
+           String responseType) 
+   {
+            
+    FASG_dataHOP_callout.HOOResponseDTO hooResp = new FASG_dataHOP_callout.HOOResponseDTO();   
+          hooResp.callerTimeZone = 'CST';
+          hooResp.callerTime = String.valueOf('08/07/2017 16:08:49');
+
+    FASG_serviceHOP_callout.getCallCenterHOOZipResponse_element element = new FASG_serviceHOP_callout.getCallCenterHOOZipResponse_element();
+          element.getCallCenterHOOZipReturn = hooResp;
+          response.put('response_x',element);                            
+   }
+}
