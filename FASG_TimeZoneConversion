@@ -1,0 +1,140 @@
+/*******************************************************************************************************************************
+Apex Class Name : FASG_TimeZoneConversion
+Version         : 1.0
+Created On      : July 14, 2017
+Function        : This class is used to figure member local time from Member Service Portal
+Modification Log :
+*     Version No                    Developer                         Date                                Comment
+* ----------------------------------------------------------------------------------------------------------------------------
+*          1.0                  Alfonso Fernandez                    07/14/17                            Initial Version
+*  `	   1.1					Alfonso Fernandez					 09/12/17				Commented out line 19 and replaced variable 
+																								name to objContact from contObj on lines 
+																								25, 27, & 31
+***********************************************************************************************************************************/
+global class FASG_TimeZoneConversion 
+{ 
+    public static Boolean syncMemberTimezone(Account objAccount, Contact objContact)
+    {           
+        Boolean updateSuccess = Boolean.valueOf('false');
+        try 
+        {    
+            // Check if the Contact has a null zip value.
+
+            //set the default timezone to CST
+            String timezone = 'CST';
+            
+            //If a valid postal code exists, use it to pull member timezone and member local time
+            if(!USAAUtils.isNullOrEmpty(objContact.OtherPostalCode))
+            {
+                FASG_dataSFDataSync_callout.SFMemberDetailsDTO myMemberDetails = new FASG_dataSFDataSync_callout.SFMemberDetailsDTO();
+                myMemberDetails.memberNumber = objAccount.MemberNumber__c;
+                myMemberDetails.postalCode = objContact.OtherPostalCode;
+                
+                FASG_serviceHOP_callout.HoursOfOperationService hoursOfOperationObject = new FASG_serviceHOP_callout.HoursOfOperationService();
+                String endPoint = USAAUtils.getHoursOfOperationServiceEndPoint();
+                String certname = USAAUtils.getSFDCToUSAACertificate();
+                hoursOfOperationObject .clientCertName_x = certname;
+                hoursOfOperationObject .endpoint_x = endPoint;
+                hoursOfOperationObject .timeout_x = 6000;
+                
+                FASG_dataHOP_callout.HOOResponseDTO hooResp = new FASG_dataHOP_callout.HOOResponseDTO();
+                DateTime startTime = System.now();
+                // For production use two blank strings in the parameters are the ANI and TNI which are not needed in this method call.
+                hooResp = hoursOfOperationObject.getCallCenterHOOZip('','', objAccount.MemberNumber__c, objContact.OtherPostalCode);
+                System.debug('##Service Timing - HOO Service## - ['+(System.now().getTime()-startTime.getTime())+'ms]');
+                //Next 3 lines moved up since we're now dependent on caller time to find the time zone
+                
+                String timeString = hooResp.callerTime;
+                String timeFromPortal = timeString.substringAfterLast(' ');
+                String convertedTime = USAAUtils.getConvertedTime(hooResp.callerTime);
+                
+                timezone = hooResp.callerTimeZone;
+                
+                if(USAAUtils.isDaylightSavingsTime())
+                {	
+                    //This will return the Daylight version of the time zone abbreviation used for local time
+                    timezone = getStandardToDaylightAbbr(timezone);
+                }
+                objAccount.Local_Time__c = convertedTime+' '+timezone;
+            }
+            //If otherPostalCode was null, timezone at this point will be the default 'CST'
+            timezone = getTranslatedMemberTimezone(timezone);
+            
+            objAccount.FASG_MemberTimeZone__c=timezone;
+            
+            update objAccount;
+            updateSuccess = Boolean.valueOf('true');  
+        }
+        catch (Exception e)
+        {                
+            System.debug('jmd hooResp call failed: ' + e.getMessage());
+            System.debug('StackTrace: '+e.getStackTraceString());
+            System.debug('Cause: '+e.getCause());
+            updateSuccess = Boolean.valueOf(false);
+        }
+        return updateSuccess;
+    }
+    
+    /* Method getStandardToDaylightAbbr
+     * Purpose: When it is Daylight Savings Time, map the standard time abbreviation that is 
+     * returned from the Hours of Operation service to represent Daylight Savings Time instead
+     * E.G. Map CST (Central Standard Time) to CDT (Central Daylight Time)
+     * 
+     * @Param - strAbbr - The Abbreviation returned from HOO Service
+     */
+    public static String getStandardToDaylightAbbr(String strAbbr)
+    {
+        Map<String, String> mapStandardToDaylight = new Map<String, String>();
+        mapStandardToDaylight.put('EST','EDT');
+        mapStandardToDaylight.put('CST','CDT');
+        mapStandardToDaylight.put('MST','MDT');
+        mapStandardToDaylight.put('PST','PDT');
+        mapStandardToDaylight.put('PNT','PNT');
+        mapStandardToDaylight.put('HST','HDT');
+        mapStandardToDaylight.put('AST','ADT');
+        
+        String dstValue = mapStandardToDaylight.get(strAbbr);
+        
+        System.debug('PHILWORK - strAbbr: '+strAbbr+' dstValue: '+dstValue);
+        
+        if(!USAAUtils.isNullOrEmpty(dstValue))
+        {
+            return dstValue;
+        }
+        //If the proper mapping doesn't exist in the map, return the value from Portal
+        //This also covers the case where the Daylight Time abbreviation is passed in
+        return strAbbr;
+	}
+    
+    /* Method: getTranslatedMemberTimezone
+     * Purpose - convert the shortened timezone abbreviation returned from the HoursOfOperation
+     * Webservice to the fully spelled out timezone name. E.g. 'CST' to 'Central Standard Time'
+     */
+    public static String getTranslatedMemberTimezone(String tzAbbr)
+    {
+        String ret = '';
+        Boolean isDST = USAAUtils.isDaylightSavingsTime();
+        
+        if(isDST)
+        {
+            tzAbbr = getStandardToDaylightAbbr(tzAbbr);
+        }
+        
+        // Send timezone to custom metadata type to get Salesforce value
+        // In the event that the time zone returned from Portal is not mapped in the custom metadata object
+        //   No results will be returned from the following SOQL and an exception will be thrown. Casting as 
+        //   an array is the best practice to avoid this potential exception
+        Member_Timezone__mdt[] tzArray = [SELECT MasterLabel FROM Member_Timezone__mdt WHERE Member_Service_Portal_TimeZone__c =: tzAbbr LIMIT 1];         
+        
+        if(tzArray.size() > 0)
+        {
+            Member_Timezone__mdt tz = tzArray[0];
+            ret = tz.MasterLabel;
+        }
+        else
+        {
+            ret = 'Central Standard Time';
+        }
+        return ret;
+    }
+}
